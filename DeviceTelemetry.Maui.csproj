@@ -11,7 +11,7 @@
 
     <!-- NuGet -->
     <PackageId>DeviceTelemetry.Maui</PackageId>
-    <Version>1.0.4</Version>
+    <Version>1.0.5</Version>
     <Authors>DaithiBradley</Authors>
     <Description>Cross-platform device telemetry utilities for .NET MAUI</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/DeviceTelemetry.Maui.svg)](https://www.nuget.org/packages/DeviceTelemetry.Maui)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Cross-platform device telemetry utilities for .NET MAUI applications. Capture battery status, location data, GPS quality, and Windows power information from your MAUI apps.
+Cross-platform device telemetry utilities for .NET MAUI applications. Capture battery status, location data, GPS quality, Windows power information, and network/SIM card details from your MAUI apps.
 
 ## Features
 
@@ -11,6 +11,7 @@ Cross-platform device telemetry utilities for .NET MAUI applications. Capture ba
 - 📍 **Location Services**: GPS coordinates with accuracy, altitude, speed, and course
 - 🛰️ **GPS Quality** (Android): Satellite information and signal quality
 - ⚡ **Windows Power Telemetry**: Screen brightness, energy saver status, power plans
+- 📱 **Network/SIM Telemetry**: Carrier information, network type, signal strength, IMEI/IMSI (where available)
 - 🎯 **Cross-Platform**: Works on Windows, Android, and iOS
 - ✅ **Fully Tested**: Comprehensive test coverage
 
@@ -39,6 +40,7 @@ var telemetry = await DeviceTelemetryUtil.CaptureAsync("device-123");
 Console.WriteLine($"Device ID: {telemetry.DeviceId}");
 Console.WriteLine($"Battery: {telemetry.Battery.LevelPercent}%");
 Console.WriteLine($"Location: {telemetry.Location?.Latitude}, {telemetry.Location?.Longitude}");
+Console.WriteLine($"Network: {telemetry.Network?.CarrierName} ({telemetry.Network?.NetworkType})");
 ```
 
 ## Usage
@@ -71,9 +73,21 @@ if (telemetry.Location != null)
     var timestamp = telemetry.Location.FixTimestampUtc;
 }
 
+// Access network/SIM information (may be null if no cellular connectivity)
+if (telemetry.Network != null)
+{
+    var carrier = telemetry.Network.CarrierName;
+    var networkType = telemetry.Network.NetworkType; // "LTE", "5G", "WiFi", etc.
+    var signalStrength = telemetry.Network.SignalStrength;
+    var isRoaming = telemetry.Network.IsRoaming;
+    var mcc = telemetry.Network.MobileCountryCode;
+    var mnc = telemetry.Network.MobileNetworkCode;
+}
+
 // Platform-specific data
 var gpsQuality = telemetry.GpsQuality; // Android only
 var windowsPower = telemetry.WindowsPower; // Windows only
+var network = telemetry.Network; // Available on Windows and Android
 ```
 
 ### With Cancellation Token
@@ -233,6 +247,7 @@ public class WindowsPowerTelemetryDto
 | Location Services | ✅ | ✅ | ✅ |
 | GPS Quality | ❌ | ✅ | ❌ |
 | Windows Power Telemetry | ✅ | ❌ | ❌ |
+| Network/SIM Telemetry | ✅ | ✅ | ❌ |
 
 ## Permissions
 
@@ -244,7 +259,10 @@ Add to `AndroidManifest.xml`:
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+<uses-permission android:name="android.permission.READ_PHONE_STATE" />
 ```
+
+**Note**: `READ_PHONE_STATE` permission is required for IMEI, IMSI, and phone number access. Some information may be limited on Android 10+ due to privacy restrictions.
 
 #### iOS
 Add to `Info.plist`:
@@ -267,13 +285,21 @@ Location permissions are handled automatically by the system.
 2. **Platform-Specific Features**:
    - GPS Quality data is only available on Android
    - Windows Power Telemetry is only available on Windows
-   - These properties will be `null` on other platforms
+   - Network/SIM Telemetry is available on Windows and Android (not iOS)
+   - These properties will be `null` on unsupported platforms
 
-3. **Battery Information**:
+3. **Network/SIM Information**:
+   - Requires cellular connectivity (SIM card) to be present
+   - IMEI and IMSI access requires `READ_PHONE_STATE` permission on Android
+   - Phone number may not be available on all devices
+   - Some information may be restricted on Android 10+ due to privacy policies
+   - Windows implementation may have limited SIM information depending on device drivers
+
+4. **Battery Information**:
    - Accuracy may vary by platform
    - Some power source information may not be available on all devices
 
-4. **Performance**:
+5. **Performance**:
    - Location capture may take several seconds
    - GPS acquisition can be slow, especially indoors
    - Consider using cancellation tokens for timeouts
@@ -337,6 +363,14 @@ public class TelemetryService
             Console.WriteLine($"Accuracy: {telemetry.Location.AccuracyMeters}m");
         }
         
+        if (telemetry.Network != null)
+        {
+            Console.WriteLine($"Carrier: {telemetry.Network.CarrierName}");
+            Console.WriteLine($"Network: {telemetry.Network.NetworkType}");
+            Console.WriteLine($"Signal: {telemetry.Network.SignalStrength} {telemetry.Network.SignalStrengthUnit}");
+            Console.WriteLine($"Roaming: {telemetry.Network.IsRoaming}");
+        }
+        
         #if ANDROID
         if (telemetry.GpsQuality != null)
         {
@@ -376,9 +410,18 @@ For issues, questions, or feature requests, please open an issue on [GitHub](htt
 
 ## Changelog
 
+### Version 1.0.4
+- Added Network/SIM telemetry support for Windows and Android
+- Implemented carrier name, network type, signal strength detection
+- Added IMEI, IMSI, MCC, MNC, and roaming status support
+- Windows implementation uses Windows Runtime APIs and WMI
+- Android implementation uses TelephonyManager APIs
+
 ### Version 1.0.3
 - Updated workflow to publish on every push
 - Added repository metadata to package
+- Implemented Windows power telemetry collection
+- Added screen brightness detection (Windows)
 
 ### Version 1.0.2
 - Initial release

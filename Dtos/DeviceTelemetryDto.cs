@@ -11,6 +11,7 @@
 
         public GpsQualityDto? GpsQuality { get; set; }
         public WindowsPowerTelemetryDto? WindowsPower { get; set; }
+        public NetworkTelemetryDto? Network { get; set; }
     }
 
     public sealed class GeoFixDto
@@ -47,6 +48,21 @@
         public string BatteryStatus { get; set; } = "Unknown";
         public string? ActivePowerPlanName { get; set; }
         public Guid? ActivePowerPlanGuid { get; set; }
+    }
+
+    public sealed class NetworkTelemetryDto
+    {
+        public string? CarrierName { get; set; }
+        public string? MobileCountryCode { get; set; }
+        public string? MobileNetworkCode { get; set; }
+        public string? NetworkType { get; set; }
+        public int? SignalStrength { get; set; }
+        public string? SignalStrengthUnit { get; set; }
+        public string? Imei { get; set; }
+        public string? Imsi { get; set; }
+        public string? PhoneNumber { get; set; }
+        public bool? IsRoaming { get; set; }
+        public string? SimState { get; set; }
     }
 
 

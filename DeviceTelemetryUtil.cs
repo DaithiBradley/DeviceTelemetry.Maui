@@ -76,6 +76,7 @@ public static partial class DeviceTelemetryUtil
 
         dto.GpsQuality = await TryGetAndroidGpsQualityAsync(ct);
         dto.WindowsPower = await TryGetWindowsPowerAsync(ct);
+        dto.Network = await TryGetNetworkTelemetryAsync(ct);
 
         return dto;
     }
@@ -132,4 +133,5 @@ public static partial class DeviceTelemetryUtil
 
     private static partial Task<GpsQualityDto?> TryGetAndroidGpsQualityAsync(CancellationToken ct);
     private static partial Task<WindowsPowerTelemetryDto?> TryGetWindowsPowerAsync(CancellationToken ct);
+    private static partial Task<NetworkTelemetryDto?> TryGetNetworkTelemetryAsync(CancellationToken ct);
 }
