@@ -54,7 +54,7 @@ jobs:
       - name: Pack NuGet Package
         run: |
           if (Test-Path "./artifacts") { Remove-Item -Recurse -Force "./artifacts" }
-          New-Item -ItemType Directory -Path "./artifacts" | Out-Null
+          New-Item -ItemType Directory -Path "./artifacts" -Force | Out-Null
           
           $version = ""
           if ("${{ github.ref }}" -like "refs/tags/v*") {
@@ -68,6 +68,10 @@ jobs:
           }
           
           dotnet pack ${{ env.PROJECT_PATH }} -c Release --no-build -o ./artifacts /p:Version=$version /p:PackageProjectUrl="https://github.com/${{ github.repository }}" /p:RepositoryUrl="https://github.com/${{ github.repository }}" /p:RepositoryType="git"
+          
+          # Verify package was created
+          Write-Host "Packages created:"
+          Get-ChildItem -Path "./artifacts" -Filter "*.nupkg" | ForEach-Object { Write-Host "  - $($_.FullName)" }
         shell: pwsh
 
       - name: Upload NuGet package artifact
@@ -80,13 +84,31 @@ jobs:
       - name: Publish to GitHub Packages
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') || startsWith(github.ref, 'refs/tags/v')
         run: |
-          dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.GITHUB_TOKEN }} --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --skip-duplicate
+          $packageFiles = Get-ChildItem -Path "./artifacts" -Filter "*.nupkg"
+          if ($packageFiles.Count -eq 0) {
+            Write-Host "No .nupkg files found in ./artifacts directory"
+            Get-ChildItem -Path "./artifacts" -Recurse | ForEach-Object { Write-Host "Found: $($_.FullName)" }
+            exit 1
+          }
+          foreach ($package in $packageFiles) {
+            Write-Host "Publishing: $($package.FullName)"
+            dotnet nuget push $package.FullName --api-key ${{ secrets.GITHUB_TOKEN }} --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --skip-duplicate
+          }
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to NuGet.org
         if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
         run: |
-          dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source "https://api.nuget.org/v3/index.json" --skip-duplicate
+          $packageFiles = Get-ChildItem -Path "./artifacts" -Filter "*.nupkg"
+          if ($packageFiles.Count -eq 0) {
+            Write-Host "No .nupkg files found in ./artifacts directory"
+            Get-ChildItem -Path "./artifacts" -Recurse | ForEach-Object { Write-Host "Found: $($_.FullName)" }
+            exit 1
+          }
+          foreach ($package in $packageFiles) {
+            Write-Host "Publishing to NuGet.org: $($package.FullName)"
+            dotnet nuget push $package.FullName --api-key ${{ secrets.NUGET_API_KEY }} --source "https://api.nuget.org/v3/index.json" --skip-duplicate
+          }
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
