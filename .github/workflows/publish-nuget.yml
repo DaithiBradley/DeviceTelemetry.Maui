@@ -68,10 +68,7 @@ jobs:
       - name: Publish to GitHub Packages
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.GITHUB_TOKEN }} --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --skip-duplicate
+          dotnet nuget push ./artifacts/*.nupkg --api-key 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 --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --skip-duplicate
 
-      - name: Publish to NuGet.org
-        if: startsWith(github.ref, 'refs/tags/v') && secrets.NUGET_API_KEY != ''
-        run: |
-          dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source "https://api.nuget.org/v3/index.json" --skip-duplicate
+
 
