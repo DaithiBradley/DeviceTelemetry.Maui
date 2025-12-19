@@ -11,10 +11,13 @@
 
     <!-- NuGet -->
     <PackageId>DeviceTelemetry.Maui</PackageId>
-    <Version>1.0.0</Version>
-    <Authors>YourCompany</Authors>
+    <Version>1.0.3</Version>
+    <Authors>DaithiBradley</Authors>
     <Description>Cross-platform device telemetry utilities for .NET MAUI</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/DaithiBradley/DeviceTelemetry.Maui</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/DaithiBradley/DeviceTelemetry.Maui</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
   </PropertyGroup>
 
