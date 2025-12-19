@@ -18,6 +18,7 @@
     <PackageProjectUrl>https://github.com/DaithiBradley/DeviceTelemetry.Maui</PackageProjectUrl>
     <RepositoryUrl>https://github.com/DaithiBradley/DeviceTelemetry.Maui</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
   </PropertyGroup>
 
@@ -35,6 +36,10 @@
     <Compile Remove="DeviceTelemetry.Maui.Tests/**" />
     <EmbeddedResource Remove="DeviceTelemetry.Maui.Tests/**" />
     <None Remove="DeviceTelemetry.Maui.Tests/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
