@@ -1,6 +1,6 @@
 # DeviceTelemetry.Maui
 
-[![NuGet](https://img.shields.io/nuget/v/DeviceTelemetry.Maui.svg)](https://www.nuget.org/packages/DeviceTelemetry.Maui)
+[![NuGet](https://img.shields.io/nuget/v/DeviceTelemetry.Maui.svg)](https://www.nuget.org/packages/DeviceTelemetry.Maui/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Cross-platform device telemetry utilities for .NET MAUI applications. Capture battery status, location data, GPS quality, Windows power information, and network/SIM card details from your MAUI apps.
