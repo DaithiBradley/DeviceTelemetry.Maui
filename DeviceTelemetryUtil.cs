@@ -119,11 +119,17 @@ public static partial class DeviceTelemetryUtil
 
         try
         {
+            // Try last known location first (faster, especially on Windows)
+            Location? lastKnown = await geolocationService.GetLastKnownLocationAsync();
+            
+            // Get current location with Medium accuracy and longer timeout for better Windows compatibility
             GeolocationRequest req =
-                new GeolocationRequest(GeolocationAccuracy.Best, TimeSpan.FromSeconds(10));
+                new GeolocationRequest(GeolocationAccuracy.Medium, TimeSpan.FromSeconds(30));
 
-            Location? loc = await geolocationService.GetLocationAsync(req, ct);
-            return loc ?? await geolocationService.GetLastKnownLocationAsync();
+            Location? current = await geolocationService.GetLocationAsync(req, ct);
+            
+            // Prefer current location, fall back to last known
+            return current ?? lastKnown;
         }
         catch
         {
