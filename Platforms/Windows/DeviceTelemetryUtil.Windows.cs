@@ -4,38 +4,48 @@ using WindowsNetworkingConnectivity = Windows.Networking.Connectivity;
 
 namespace DeviceTelemetry.Maui;
 
-// All the code in this file is only included on Windows.
 #if WINDOWS
+/// <summary>
+/// Windows-specific telemetry: WinRT power APIs, WMI brightness/power plans, and network/SIM hints.
+/// </summary>
 public static partial class DeviceTelemetryUtil
 {
+    /// <summary>
+    /// Android GPS quality is not available on Windows.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Always null.</returns>
     private static partial Task<GpsQualityDto?> TryGetAndroidGpsQualityAsync(CancellationToken ct)
         => Task.FromResult<GpsQualityDto?>(null);
 
     /// <summary>
     /// Collects network and SIM card telemetry data for Windows devices.
     /// </summary>
+    /// <param name="includeIdentifiers">Whether IMEI-like identifiers should be read from the WWAN registry.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Network telemetry data, or null if unavailable.</returns>
-    private static partial Task<NetworkTelemetryDto?> TryGetNetworkTelemetryAsync(CancellationToken ct)
+    private static partial Task<NetworkTelemetryDto?> TryGetNetworkTelemetryAsync(
+        bool includeIdentifiers,
+        CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+
         try
         {
             var dto = new NetworkTelemetryDto();
-
-            // Get network information using Windows Runtime APIs
+            GetNetworkInfoFromMobileBroadband(dto, includeIdentifiers);
             GetNetworkInfoFromWindowsRuntime(dto);
 
-            // Get SIM card information using WMI (more reliable for SIM data)
-            GetSimInfoFromWmi(dto);
-
-            // Only return DTO if we have at least some information
-            if (dto.CarrierName != null || dto.NetworkType != null || dto.Imei != null || 
-                dto.MobileCountryCode != null || dto.MobileNetworkCode != null)
+            if (HasCellularTelemetry(dto))
             {
                 return Task.FromResult<NetworkTelemetryDto?>(dto);
             }
 
             return Task.FromResult<NetworkTelemetryDto?>(null);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
@@ -44,8 +54,123 @@ public static partial class DeviceTelemetryUtil
     }
 
     /// <summary>
-    /// Gets network information from Windows Runtime APIs.
+    /// Gets cellular carrier and identifier data from the Windows mobile broadband APIs.
     /// </summary>
+    /// <param name="dto">The DTO to populate.</param>
+    /// <param name="includeIdentifiers">Whether IMEI, IMSI, and phone number should be read.</param>
+    private static void GetNetworkInfoFromMobileBroadband(NetworkTelemetryDto dto, bool includeIdentifiers)
+    {
+        try
+        {
+            var modem = Windows.Networking.NetworkOperators.MobileBroadbandModem.GetDefault();
+            if (modem is null)
+            {
+                return;
+            }
+
+            try
+            {
+                var network = modem.CurrentNetwork;
+                if (network != null)
+                {
+                    if (!string.IsNullOrWhiteSpace(network.RegisteredProviderName))
+                    {
+                        dto.CarrierName = network.RegisteredProviderName;
+                    }
+
+                    dto.NetworkType ??= MapMobileBroadbandDataClass(network.RegisteredDataClass.ToString());
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                var info = modem.DeviceInformation;
+                if (info is null)
+                {
+                    return;
+                }
+
+                if (!includeIdentifiers)
+                {
+                    return;
+                }
+
+                if (IsLikelyImei(info.DeviceId))
+                {
+                    dto.Imei = info.DeviceId;
+                }
+
+                if (!string.IsNullOrWhiteSpace(info.SubscriberId))
+                {
+                    dto.Imsi = info.SubscriberId;
+                }
+
+                var number = info.TelephoneNumbers?.FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(number))
+                {
+                    dto.PhoneNumber = number;
+                }
+            }
+            catch
+            {
+            }
+        }
+        catch
+        {
+            // No mobile broadband modem, or the WinRT APIs are unavailable.
+        }
+    }
+
+    /// <summary>
+    /// Maps a Windows mobile-broadband data-class name to a stable radio string.
+    /// </summary>
+    /// <param name="dataClass">The data class name.</param>
+    /// <returns>A radio type string, or null when none is present.</returns>
+    private static string? MapMobileBroadbandDataClass(string? dataClass)
+    {
+        if (string.IsNullOrWhiteSpace(dataClass) || dataClass == "None")
+        {
+            return null;
+        }
+
+        if (dataClass.Contains("Lte", StringComparison.OrdinalIgnoreCase))
+        {
+            return "LTE";
+        }
+
+        if (dataClass.Contains("Hsdpa", StringComparison.OrdinalIgnoreCase)
+            || dataClass.Contains("Hsupa", StringComparison.OrdinalIgnoreCase)
+            || dataClass.Contains("Umts", StringComparison.OrdinalIgnoreCase))
+        {
+            return "HSPA";
+        }
+
+        if (dataClass.Contains("Edge", StringComparison.OrdinalIgnoreCase))
+        {
+            return "EDGE";
+        }
+
+        if (dataClass.Contains("Gprs", StringComparison.OrdinalIgnoreCase))
+        {
+            return "GPRS";
+        }
+
+        if (dataClass.Contains("Nr", StringComparison.OrdinalIgnoreCase)
+            || dataClass.Contains("5G", StringComparison.OrdinalIgnoreCase))
+        {
+            return "5G";
+        }
+
+        return dataClass;
+    }
+
+    /// <summary>
+    /// Gets network information from Windows Runtime APIs. Only cellular (WWAN) profiles are recorded here; Wi-Fi and Ethernet belong on <see cref="ConnectivityDto"/>.
+    /// </summary>
+    /// <param name="dto">The DTO to populate.</param>
     private static void GetNetworkInfoFromWindowsRuntime(NetworkTelemetryDto dto)
     {
         try
@@ -56,280 +181,134 @@ public static partial class DeviceTelemetryUtil
                 return;
             }
 
-            // Get network connectivity level and type
-            var connectivityLevel = profile.GetNetworkConnectivityLevel();
-            var connectionCost = profile.GetConnectionCost();
-            var dataPlanStatus = profile.GetDataPlanStatus();
-
-            // Determine network type
             var networkAdapter = profile.NetworkAdapter;
-            if (networkAdapter != null)
+            if (networkAdapter is null || networkAdapter.IanaInterfaceType != 243)
             {
-                var ianaInterfaceType = networkAdapter.IanaInterfaceType;
-                
-                // 243 = WWAN (Wireless WAN - Cellular)
-                if (ianaInterfaceType == 243)
-                {
-                    dto.NetworkType = "Cellular";
-                    
-                    // Try to get more specific network type from WMI
-                    var specificType = GetCellularNetworkType();
-                    if (specificType != null)
-                    {
-                        dto.NetworkType = specificType;
-                    }
-                }
-                else if (ianaInterfaceType == 71) // WiFi
-                {
-                    dto.NetworkType = "WiFi";
-                }
-                else if (ianaInterfaceType == 6) // Ethernet
-                {
-                    dto.NetworkType = "Ethernet";
-                }
-                else
-                {
-                    dto.NetworkType = $"Type_{ianaInterfaceType}";
-                }
+                return;
             }
 
-            // Get roaming status
+            dto.NetworkType ??= GetCellularNetworkType() ?? "Cellular";
+
+            var connectionCost = profile.GetConnectionCost();
             if (connectionCost != null)
             {
                 dto.IsRoaming = connectionCost.Roaming;
             }
-
-            // Get data plan information if available
-            if (dataPlanStatus != null)
-            {
-                // Data plan status might contain carrier info
-            }
         }
         catch
         {
-            // Windows Runtime APIs might not be available
+            // Windows Runtime APIs might not be available.
         }
     }
 
     /// <summary>
-    /// Gets cellular network type (LTE, 5G, etc.) from WMI.
+    /// Gets cellular network type (LTE, 5G, etc.) from WMI adapter names.
     /// </summary>
+    /// <returns>A network type string, or null if it cannot be determined.</returns>
     private static string? GetCellularNetworkType()
     {
         try
         {
             using var searcher = new System.Management.ManagementObjectSearcher(
-                "SELECT * FROM Win32_NetworkAdapter WHERE AdapterTypeID = 9");
+                "SELECT Name FROM Win32_NetworkAdapter WHERE AdapterTypeID = 9");
 
             foreach (System.Management.ManagementObject obj in searcher.Get())
             {
                 var name = obj["Name"]?.ToString();
-                if (name != null)
+                if (name == null)
                 {
-                    if (name.Contains("5G") || name.Contains("NR"))
-                    {
-                        return "5G";
-                    }
-                    else if (name.Contains("LTE") || name.Contains("4G"))
-                    {
-                        return "LTE";
-                    }
-                    else if (name.Contains("3G"))
-                    {
-                        return "3G";
-                    }
-                    else if (name.Contains("HSPA"))
-                    {
-                        return "HSPA";
-                    }
+                    continue;
+                }
+
+                if (name.Contains("5G", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("NR", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "5G";
+                }
+
+                if (name.Contains("LTE", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("4G", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "LTE";
+                }
+
+                if (name.Contains("3G", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "3G";
+                }
+
+                if (name.Contains("HSPA", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "HSPA";
                 }
             }
         }
         catch
         {
-            // WMI might not be available
+            // WMI might not be available.
         }
 
         return null;
     }
 
     /// <summary>
-    /// Gets SIM card information from WMI.
-    /// </summary>
-    private static void GetSimInfoFromWmi(NetworkTelemetryDto dto)
-    {
-        try
-        {
-            // Get SIM information from Win32_POTSModemToSerialPort (for mobile broadband modems)
-            using var modemSearcher = new System.Management.ManagementObjectSearcher(
-                "SELECT * FROM Win32_POTSModem");
-
-            foreach (System.Management.ManagementObject modem in modemSearcher.Get())
-            {
-                var description = modem["Description"]?.ToString();
-                var attachedTo = modem["AttachedTo"]?.ToString();
-                
-                if (description != null && 
-                    (description.Contains("WWAN") || description.Contains("Cellular") || 
-                     description.Contains("Mobile Broadband") || description.Contains("LTE") ||
-                     description.Contains("5G")))
-                {
-                    if (dto.CarrierName == null && attachedTo != null)
-                    {
-                        dto.CarrierName = attachedTo;
-                    }
-                    break;
-                }
-            }
-
-            // Try to get IMEI and carrier info from Win32_PnPEntity
-            using var pnpSearcher = new System.Management.ManagementObjectSearcher(
-                "SELECT * FROM Win32_PnPEntity WHERE Description LIKE '%WWAN%' OR Description LIKE '%Cellular%' OR Description LIKE '%Mobile Broadband%'");
-
-            foreach (System.Management.ManagementObject pnp in pnpSearcher.Get())
-            {
-                var description = pnp["Description"]?.ToString();
-                var name = pnp["Name"]?.ToString();
-                
-                if (description != null)
-                {
-                    if (dto.NetworkType == null)
-                    {
-                        dto.NetworkType = description;
-                    }
-                    
-                    // Try to extract carrier name from description
-                    if (dto.CarrierName == null && name != null)
-                    {
-                        // Carrier name might be in the device name
-                        dto.CarrierName = name;
-                    }
-                }
-            }
-
-            // Try to get IMEI from registry (if available)
-            try
-            {
-                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\WWAN\Profile");
-                
-                if (key != null)
-                {
-                    var subKeyNames = key.GetSubKeyNames();
-                    foreach (var subKeyName in subKeyNames)
-                    {
-                        using var subKey = key.OpenSubKey(subKeyName);
-                        if (subKey != null)
-                        {
-                            var profileName = subKey.GetValue("ProfileName")?.ToString();
-                            if (profileName != null && dto.CarrierName == null)
-                            {
-                                dto.CarrierName = profileName;
-                            }
-                            
-                            // Try to get IMEI
-                            var deviceId = subKey.GetValue("DeviceID")?.ToString();
-                            if (deviceId != null && deviceId.Length >= 15)
-                            {
-                                dto.Imei = deviceId;
-                            }
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // Registry access might fail
-            }
-        }
-        catch
-        {
-            // WMI might not be available or SIM not present
-        }
-    }
-
-    /// <summary>
-    /// Collects Windows power telemetry data using Windows Runtime APIs.
+    /// Collects Windows power telemetry data using Windows Runtime and WMI APIs.
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Windows power telemetry data, or null if unavailable.</returns>
     private static partial Task<WindowsPowerTelemetryDto?> TryGetWindowsPowerAsync(CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+
         try
         {
-            var dto = new WindowsPowerTelemetryDto();
-
-            // Get screen brightness
-            dto.ScreenBrightnessPercent = GetScreenBrightness();
-
-            // Get energy saver status
-            dto.EnergySaverStatus = GetEnergySaverStatus();
-
-            // Get power supply status
-            dto.PowerSupplyStatus = GetPowerSupplyStatus();
-
-            // Get battery status
-            dto.BatteryStatus = GetBatteryStatus();
-
-            // Get active power plan
             var powerPlan = GetActivePowerPlan();
-            dto.ActivePowerPlanName = powerPlan.Name;
-            dto.ActivePowerPlanGuid = powerPlan.Guid;
+            var dto = new WindowsPowerTelemetryDto
+            {
+                ScreenBrightnessPercent = GetScreenBrightness(),
+                EnergySaverStatus = GetEnergySaverStatus(),
+                PowerSupplyStatus = GetPowerSupplyStatus(),
+                BatteryStatus = GetBatteryStatus(),
+                ActivePowerPlanName = powerPlan.Name,
+                ActivePowerPlanGuid = powerPlan.Guid
+            };
 
             return Task.FromResult<WindowsPowerTelemetryDto?>(dto);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch
         {
-            // Return null if any errors occur
             return Task.FromResult<WindowsPowerTelemetryDto?>(null);
         }
     }
 
     /// <summary>
-    /// Gets the current screen brightness percentage.
+    /// Gets the current screen brightness percentage from WMI (root\wmi).
     /// </summary>
     /// <returns>Brightness percentage (0-100), or null if unavailable.</returns>
     private static int? GetScreenBrightness()
     {
         try
         {
-            // Try to get brightness from registry (Windows 10/11)
-            // The brightness is stored per display in the registry
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                @"SOFTWARE\Microsoft\Wmi\MonitorBrightness");
-            
-            if (key != null)
-            {
-                var valueNames = key.GetValueNames();
-                if (valueNames.Length > 0)
-                {
-                    // Get the first display's brightness value
-                    var brightnessValue = key.GetValue(valueNames[0]);
-                    if (brightnessValue is int brightness && brightness >= 0 && brightness <= 100)
-                    {
-                        return brightness;
-                    }
-                }
-            }
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                @"root\wmi",
+                "SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active = true");
 
-            // Alternative: Try to get from WMI
-            try
+            foreach (System.Management.ManagementObject obj in searcher.Get())
             {
-                using var searcher = new System.Management.ManagementObjectSearcher(
-                    "SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active = true");
-                
-                foreach (System.Management.ManagementObject obj in searcher.Get())
+                var brightness = obj["CurrentBrightness"];
+                if (brightness is byte brightnessByte)
                 {
-                    var brightness = obj["CurrentBrightness"];
-                    if (brightness != null && brightness is byte brightnessByte)
-                    {
-                        return brightnessByte; // WMI returns 0-100 as byte
-                    }
+                    return brightnessByte;
                 }
-            }
-            catch
-            {
-                // WMI might not be available or accessible
+
+                if (brightness != null && byte.TryParse(brightness.ToString(), out var parsed))
+                {
+                    return parsed;
+                }
             }
 
             return null;
@@ -386,21 +365,20 @@ public static partial class DeviceTelemetryUtil
     }
 
     /// <summary>
-    /// Gets the battery status.
+    /// Gets the battery status from <c>PowerManager.BatteryStatus</c>.
     /// </summary>
     /// <returns>Battery status string.</returns>
     private static string GetBatteryStatus()
     {
         try
         {
-            // Note: PowerManager doesn't have a direct BatteryStatus property
-            // We can infer from PowerSupplyStatus and EnergySaverStatus
-            var powerSupply = WindowsSystemPower.PowerManager.PowerSupplyStatus;
-            return powerSupply switch
+            var status = WindowsSystemPower.PowerManager.BatteryStatus;
+            return status switch
             {
-                WindowsSystemPower.PowerSupplyStatus.Adequate => "Adequate",
-                WindowsSystemPower.PowerSupplyStatus.Inadequate => "Inadequate",
-                WindowsSystemPower.PowerSupplyStatus.NotPresent => "NotPresent",
+                WindowsSystemPower.BatteryStatus.Charging => "Charging",
+                WindowsSystemPower.BatteryStatus.Discharging => "Discharging",
+                WindowsSystemPower.BatteryStatus.Idle => "Idle",
+                WindowsSystemPower.BatteryStatus.NotPresent => "NotPresent",
                 _ => "Unknown"
             };
         }
@@ -411,23 +389,22 @@ public static partial class DeviceTelemetryUtil
     }
 
     /// <summary>
-    /// Gets the active power plan information.
+    /// Gets the active power plan from WMI in root\cimv2\power.
     /// </summary>
     /// <returns>Power plan name and GUID.</returns>
     private static (string? Name, Guid? Guid) GetActivePowerPlan()
     {
         try
         {
-            // Use WMI to get power plan information
             using var searcher = new System.Management.ManagementObjectSearcher(
-                "SELECT * FROM Win32_PowerPlan WHERE IsActive = True");
+                @"root\cimv2\power",
+                "SELECT ElementName, InstanceID FROM Win32_PowerPlan WHERE IsActive = True");
 
             foreach (System.Management.ManagementObject obj in searcher.Get())
             {
                 var name = obj["ElementName"]?.ToString();
                 var instanceId = obj["InstanceID"]?.ToString();
 
-                // Extract GUID from InstanceID (format: Microsoft:PowerPlan\{guid})
                 Guid? guid = null;
                 if (instanceId != null && instanceId.Contains('{'))
                 {
@@ -455,4 +432,3 @@ public static partial class DeviceTelemetryUtil
     }
 }
 #endif
-

@@ -40,17 +40,14 @@ public sealed class ToPercentTests
     }
 
     [Theory]
-    [InlineData(-1.0, 0)]
-    [InlineData(-0.5, 0)]
-    [InlineData(-0.1, 0)]
-    [InlineData(-100.0, 0)]
-    public void ToPercent_WithNegativeInputs_ClampsToZero(double input, int expected)
+    [InlineData(-1.0)]
+    [InlineData(-0.5)]
+    [InlineData(-0.1)]
+    [InlineData(-100.0)]
+    [InlineData(double.NaN)]
+    public void ToPercent_WithUnknownInputs_ReturnsNull(double input)
     {
-        // Act
-        var result = DeviceTelemetryUtil.ToPercent(input);
-
-        // Assert
-        result.Should().Be(expected);
+        DeviceTelemetryUtil.ToPercent(input).Should().BeNull();
     }
 
     [Theory]

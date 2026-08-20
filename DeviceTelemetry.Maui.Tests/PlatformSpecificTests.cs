@@ -46,7 +46,7 @@ public sealed class PlatformSpecificTests
         cts.Cancel();
 
         // Act
-        var result = await DeviceTelemetryUtil.CaptureAsync(
+        var act = async () => await DeviceTelemetryUtil.CaptureAsync(
             deviceId,
             batteryService.Object,
             permissionService.Object,
@@ -54,8 +54,7 @@ public sealed class PlatformSpecificTests
             cts.Token);
 
         // Assert
-        result.Should().NotBeNull();
-        result.DeviceId.Should().Be(deviceId);
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     private static Mock<IBatteryService> CreateMockBatteryService()

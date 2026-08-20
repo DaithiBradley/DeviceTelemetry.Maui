@@ -21,6 +21,10 @@ public sealed class DtoTests
         dto.Battery.Should().NotBeNull();
         dto.GpsQuality.Should().BeNull();
         dto.WindowsPower.Should().BeNull();
+        dto.Network.Should().BeNull();
+        dto.DeviceInfo.Should().BeNull();
+        dto.Connectivity.Should().BeNull();
+        dto.LocationStatus.Should().Be(LocationCaptureStatus.NotRequested);
     }
 
     [Fact]
@@ -31,7 +35,7 @@ public sealed class DtoTests
 
         // Assert
         dto.Battery.Should().NotBeNull();
-        dto.Battery.LevelPercent.Should().Be(0);
+        dto.Battery.LevelPercent.Should().BeNull();
         dto.Battery.State.Should().Be("Unknown");
         dto.Battery.PowerSource.Should().Be("Unknown");
     }
@@ -103,7 +107,7 @@ public sealed class DtoTests
         var dto = new BatteryDto();
 
         // Assert
-        dto.LevelPercent.Should().Be(0);
+        dto.LevelPercent.Should().BeNull();
         dto.State.Should().Be("Unknown");
         dto.PowerSource.Should().Be("Unknown");
     }
@@ -202,6 +206,48 @@ public sealed class DtoTests
         dto.SatellitesUsedInFix.Should().Be(satellitesUsed);
         dto.AverageCn0DbHz.Should().Be(averageCn0);
         dto.QualityBand.Should().Be(qualityBand);
+    }
+
+    [Fact]
+    public void DeviceInfoDto_CanBeCreatedAndSet()
+    {
+        var dto = new DeviceInfoDto
+        {
+            Model = "Pixel",
+            Manufacturer = "Google",
+            Name = "Phone",
+            VersionString = "16",
+            Platform = "Android",
+            Idiom = "Phone",
+            DeviceType = "Physical"
+        };
+
+        dto.Model.Should().Be("Pixel");
+        dto.Platform.Should().Be("Android");
+        dto.Idiom.Should().Be("Phone");
+    }
+
+    [Fact]
+    public void ConnectivityDto_CanBeCreatedAndSet()
+    {
+        var dto = new ConnectivityDto
+        {
+            NetworkAccess = "Internet",
+            ConnectionProfiles = ["WiFi", "Cellular"]
+        };
+
+        dto.NetworkAccess.Should().Be("Internet");
+        dto.ConnectionProfiles.Should().Equal("WiFi", "Cellular");
+    }
+
+    [Fact]
+    public void NetworkTelemetryDto_DefaultIdentifiers_AreNull()
+    {
+        var dto = new NetworkTelemetryDto();
+
+        dto.Imei.Should().BeNull();
+        dto.Imsi.Should().BeNull();
+        dto.PhoneNumber.Should().BeNull();
     }
 }
 

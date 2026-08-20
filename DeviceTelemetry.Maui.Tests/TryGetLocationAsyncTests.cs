@@ -227,8 +227,8 @@ public sealed class TryGetLocationAsyncTests
 
         // Assert
         capturedRequest.Should().NotBeNull();
-        capturedRequest!.DesiredAccuracy.Should().Be(GeolocationAccuracy.Best);
-        capturedRequest.Timeout.Should().Be(TimeSpan.FromSeconds(10));
+        capturedRequest!.DesiredAccuracy.Should().Be(GeolocationAccuracy.Medium);
+        capturedRequest.Timeout.Should().Be(TimeSpan.FromSeconds(30));
     }
 }
 

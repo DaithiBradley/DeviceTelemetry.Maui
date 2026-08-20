@@ -1,18 +1,18 @@
-﻿using DeviceTelemetry.Maui.Dtos;
+using DeviceTelemetry.Maui.Dtos;
 
 namespace DeviceTelemetry.Maui;
 
-#if IOS
+#if MACCATALYST
 using CoreTelephony;
 using Foundation;
 
 /// <summary>
-/// iOS-specific telemetry: CoreTelephony carrier information. IMEI, IMSI, and phone number are not available to App Store apps.
+/// Mac Catalyst-specific telemetry. GNSS and Windows power are not available; carrier data is collected when CoreTelephony provides it.
 /// </summary>
 public static partial class DeviceTelemetryUtil
 {
     /// <summary>
-    /// Android GPS quality is not available on iOS.
+    /// Android GPS quality is not available on Mac Catalyst.
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Always null.</returns>
@@ -20,7 +20,7 @@ public static partial class DeviceTelemetryUtil
         => Task.FromResult<GpsQualityDto?>(null);
 
     /// <summary>
-    /// Windows power is not available on iOS.
+    /// Windows power is not available on Mac Catalyst.
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Always null.</returns>
@@ -28,9 +28,9 @@ public static partial class DeviceTelemetryUtil
         => Task.FromResult<WindowsPowerTelemetryDto?>(null);
 
     /// <summary>
-    /// Collects carrier and radio access information using CoreTelephony.
+    /// Collects carrier information using CoreTelephony when the Mac has cellular hardware.
     /// </summary>
-    /// <param name="includeIdentifiers">Ignored on iOS; identifiers are not exposed by the OS.</param>
+    /// <param name="includeIdentifiers">Ignored; identifiers are not exposed on Mac Catalyst.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Network telemetry data, or null if unavailable.</returns>
     private static partial Task<NetworkTelemetryDto?> TryGetNetworkTelemetryAsync(
@@ -58,8 +58,6 @@ public static partial class DeviceTelemetryUtil
                 }
             }
 
-            carrier ??= networkInfo.SubscriberCellularProvider;
-
             if (carrier != null)
             {
                 dto.CarrierName = string.IsNullOrWhiteSpace(carrier.CarrierName) ? null : carrier.CarrierName;
@@ -71,26 +69,16 @@ public static partial class DeviceTelemetryUtil
                     : carrier.MobileNetworkCode;
             }
 
-            NSString? radio = null;
             if (networkInfo.ServiceCurrentRadioAccessTechnology is { } radios)
             {
                 foreach (var value in radios.Values)
                 {
-                    if (value is NSString found)
+                    if (value is NSString radio)
                     {
-                        radio = found;
+                        dto.NetworkType = radio.ToString();
                         break;
                     }
                 }
-            }
-
-            radio ??= networkInfo.CurrentRadioAccessTechnology is { } current
-                ? new NSString(current)
-                : null;
-
-            if (radio != null)
-            {
-                dto.NetworkType = MapIosRadioAccess(radio);
             }
 
             if (dto.CarrierName != null || dto.NetworkType != null || dto.MobileCountryCode != null)
@@ -108,44 +96,6 @@ public static partial class DeviceTelemetryUtil
         {
             return Task.FromResult<NetworkTelemetryDto?>(null);
         }
-    }
-
-    /// <summary>
-    /// Maps a CoreTelephony radio access technology constant to a stable string.
-    /// </summary>
-    /// <param name="radio">The radio access technology.</param>
-    /// <returns>A display string such as LTE or 5G.</returns>
-    private static string MapIosRadioAccess(NSString radio)
-    {
-        var value = radio.ToString();
-        if (value.Contains("NR", StringComparison.OrdinalIgnoreCase))
-        {
-            return "5G";
-        }
-
-        if (value.Contains("LTE", StringComparison.OrdinalIgnoreCase))
-        {
-            return "LTE";
-        }
-
-        if (value.Contains("HSDPA", StringComparison.OrdinalIgnoreCase)
-            || value.Contains("HSUPA", StringComparison.OrdinalIgnoreCase)
-            || value.Contains("WCDMA", StringComparison.OrdinalIgnoreCase))
-        {
-            return "HSPA";
-        }
-
-        if (value.Contains("Edge", StringComparison.OrdinalIgnoreCase))
-        {
-            return "EDGE";
-        }
-
-        if (value.Contains("GPRS", StringComparison.OrdinalIgnoreCase))
-        {
-            return "GPRS";
-        }
-
-        return value;
     }
 }
 #endif

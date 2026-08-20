@@ -88,6 +88,7 @@ public sealed class DeviceTelemetryUtilTests
         result.Location.SpeedMetersPerSecond.Should().Be(5.2);
         result.Location.CourseDegrees.Should().Be(90.0);
         result.Location.FixTimestampUtc.Should().Be(location.Timestamp);
+        result.LocationStatus.Should().Be(LocationCaptureStatus.Ok);
     }
 
     [Fact]
@@ -108,6 +109,7 @@ public sealed class DeviceTelemetryUtilTests
 
         // Assert
         result.Location.Should().BeNull();
+        result.LocationStatus.Should().Be(LocationCaptureStatus.Denied);
     }
 
     [Fact]
@@ -136,6 +138,7 @@ public sealed class DeviceTelemetryUtilTests
         permissionService.Verify(x => x.CheckStatusAsync<Permissions.LocationWhenInUse>(), Times.Once);
         permissionService.Verify(x => x.RequestAsync<Permissions.LocationWhenInUse>(), Times.Once);
         result.Location.Should().BeNull();
+        result.LocationStatus.Should().Be(LocationCaptureStatus.Denied);
     }
 
     [Fact]
@@ -162,6 +165,7 @@ public sealed class DeviceTelemetryUtilTests
 
         // Assert
         result.Location.Should().BeNull();
+        result.LocationStatus.Should().Be(LocationCaptureStatus.Unavailable);
     }
 
     [Fact]
@@ -194,6 +198,7 @@ public sealed class DeviceTelemetryUtilTests
         result.Location.Should().NotBeNull();
         result.Location!.Latitude.Should().Be(37.7749);
         result.Location.Longitude.Should().Be(-122.4194);
+        result.LocationStatus.Should().Be(LocationCaptureStatus.Ok);
     }
 
     [Fact]
@@ -208,7 +213,7 @@ public sealed class DeviceTelemetryUtilTests
         var geolocationService = CreateMockGeolocationService(null);
 
         // Act
-        var result = await DeviceTelemetryUtil.CaptureAsync(
+        var act = async () => await DeviceTelemetryUtil.CaptureAsync(
             deviceId,
             batteryService.Object,
             permissionService.Object,
@@ -216,8 +221,7 @@ public sealed class DeviceTelemetryUtilTests
             cts.Token);
 
         // Assert
-        result.Should().NotBeNull();
-        result.DeviceId.Should().Be(deviceId);
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Theory]
@@ -240,6 +244,164 @@ public sealed class DeviceTelemetryUtilTests
 
         // Assert
         result.DeviceId.Should().Be(deviceId);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_WhenIncludeLocationIsFalse_SkipsPermissionAndLocation()
+    {
+        var batteryService = CreateMockBatteryService();
+        var permissionService = CreateMockPermissionService(PermissionStatus.Granted);
+        var geolocationService = CreateMockGeolocationService(new Location(1, 2));
+        var options = new CaptureOptions { IncludeLocation = false };
+
+        var result = await DeviceTelemetryUtil.CaptureAsync(
+            "device-1",
+            options,
+            batteryService.Object,
+            permissionService.Object,
+            geolocationService.Object,
+            CreateMockDeviceInfoService().Object,
+            CreateMockConnectivityService().Object);
+
+        result.Location.Should().BeNull();
+        result.LocationStatus.Should().Be(LocationCaptureStatus.NotRequested);
+        result.GpsQuality.Should().BeNull();
+        permissionService.Verify(
+            x => x.CheckStatusAsync<Permissions.LocationWhenInUse>(),
+            Times.Never);
+        geolocationService.Verify(
+            x => x.GetLocationAsync(It.IsAny<GeolocationRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_WithCustomLocationAccuracy_PassesOptionsToGeolocation()
+    {
+        var batteryService = CreateMockBatteryService();
+        var permissionService = CreateMockPermissionService(PermissionStatus.Granted);
+        var geolocationService = new Mock<IGeolocationService>();
+        GeolocationRequest? captured = null;
+        geolocationService
+            .Setup(x => x.GetLocationAsync(It.IsAny<GeolocationRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<GeolocationRequest, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new Location(1, 2));
+        geolocationService
+            .Setup(x => x.GetLastKnownLocationAsync())
+            .ReturnsAsync((Location?)null);
+
+        var options = new CaptureOptions
+        {
+            LocationAccuracy = GeolocationAccuracy.Low,
+            LocationTimeout = TimeSpan.FromSeconds(5)
+        };
+
+        await DeviceTelemetryUtil.CaptureAsync(
+            "device-1",
+            options,
+            batteryService.Object,
+            permissionService.Object,
+            geolocationService.Object,
+            CreateMockDeviceInfoService().Object,
+            CreateMockConnectivityService().Object);
+
+        captured.Should().NotBeNull();
+        captured!.DesiredAccuracy.Should().Be(GeolocationAccuracy.Low);
+        captured.Timeout.Should().Be(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task CaptureAsync_DefaultOptions_DoesNotPopulateIdentifiers()
+    {
+        var batteryService = CreateMockBatteryService();
+        var permissionService = CreateMockPermissionService(PermissionStatus.Denied);
+        var geolocationService = CreateMockGeolocationService(null);
+
+        var result = await DeviceTelemetryUtil.CaptureAsync(
+            "device-1",
+            batteryService.Object,
+            permissionService.Object,
+            geolocationService.Object);
+
+        result.Network?.Imei.Should().BeNull();
+        result.Network?.Imsi.Should().BeNull();
+        result.Network?.PhoneNumber.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CaptureAsync_WithDeviceInfoAndConnectivityServices_PopulatesDtos()
+    {
+        var batteryService = CreateMockBatteryService();
+        var permissionService = CreateMockPermissionService(PermissionStatus.Denied);
+        var geolocationService = CreateMockGeolocationService(null);
+        var deviceInfo = CreateMockDeviceInfoService();
+        var connectivity = CreateMockConnectivityService();
+        var options = new CaptureOptions { IncludeLocation = false, IncludeNetwork = false, IncludeWindowsPower = false };
+
+        var result = await DeviceTelemetryUtil.CaptureAsync(
+            "device-1",
+            options,
+            batteryService.Object,
+            permissionService.Object,
+            geolocationService.Object,
+            deviceInfo.Object,
+            connectivity.Object);
+
+        result.DeviceInfo.Should().NotBeNull();
+        result.DeviceInfo!.Model.Should().Be("Pixel");
+        result.DeviceInfo.Platform.Should().Be("Android");
+        result.Connectivity.Should().NotBeNull();
+        result.Connectivity!.NetworkAccess.Should().Be("Internet");
+        result.Connectivity.ConnectionProfiles.Should().Equal("WiFi");
+    }
+
+    [Fact]
+    public async Task CaptureAsync_WhenPermissionCheckThrows_ReturnsDeniedWithoutThrowing()
+    {
+        var batteryService = CreateMockBatteryService();
+        var permissionService = new Mock<IPermissionService>();
+        permissionService
+            .Setup(x => x.CheckStatusAsync<Permissions.LocationWhenInUse>())
+            .ThrowsAsync(new InvalidOperationException("permission APIs unavailable"));
+        var geolocationService = CreateMockGeolocationService(null);
+
+        var result = await DeviceTelemetryUtil.CaptureAsync(
+            "device-1",
+            batteryService.Object,
+            permissionService.Object,
+            geolocationService.Object);
+
+        result.Location.Should().BeNull();
+        result.LocationStatus.Should().Be(LocationCaptureStatus.Denied);
+        result.Battery.LevelPercent.Should().Be(50);
+        geolocationService.Verify(
+            x => x.GetLocationAsync(It.IsAny<GeolocationRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void HasCellularTelemetry_IgnoresWifiAndUnknownPlaceholders()
+    {
+        DeviceTelemetryUtil.HasCellularTelemetry(new NetworkTelemetryDto { NetworkType = "WiFi" })
+            .Should().BeFalse();
+        DeviceTelemetryUtil.HasCellularTelemetry(new NetworkTelemetryDto { NetworkType = "Type_6" })
+            .Should().BeFalse();
+        DeviceTelemetryUtil.HasCellularTelemetry(new NetworkTelemetryDto { NetworkType = "Unknown" })
+            .Should().BeFalse();
+        DeviceTelemetryUtil.HasCellularTelemetry(new NetworkTelemetryDto { CarrierName = " " })
+            .Should().BeFalse();
+        DeviceTelemetryUtil.HasCellularTelemetry(new NetworkTelemetryDto { NetworkType = "LTE" })
+            .Should().BeTrue();
+        DeviceTelemetryUtil.HasCellularTelemetry(new NetworkTelemetryDto { CarrierName = "Vodafone" })
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsLikelyImei_RequiresFifteenDigits()
+    {
+        DeviceTelemetryUtil.IsLikelyImei("123456789012345").Should().BeTrue();
+        DeviceTelemetryUtil.IsLikelyImei("COM3").Should().BeFalse();
+        DeviceTelemetryUtil.IsLikelyImei("PCI\\VEN_8086").Should().BeFalse();
+        DeviceTelemetryUtil.IsLikelyImei("12345678901234").Should().BeFalse();
     }
 
     private static Mock<IBatteryService> CreateMockBatteryService(
@@ -271,6 +433,27 @@ public sealed class DeviceTelemetryUtilTests
             .ReturnsAsync(location);
         mock.Setup(x => x.GetLastKnownLocationAsync())
             .ReturnsAsync(location);
+        return mock;
+    }
+
+    private static Mock<IDeviceInfoService> CreateMockDeviceInfoService()
+    {
+        var mock = new Mock<IDeviceInfoService>();
+        mock.Setup(x => x.Model).Returns("Pixel");
+        mock.Setup(x => x.Manufacturer).Returns("Google");
+        mock.Setup(x => x.Name).Returns("Test Phone");
+        mock.Setup(x => x.VersionString).Returns("16");
+        mock.Setup(x => x.Platform).Returns("Android");
+        mock.Setup(x => x.Idiom).Returns("Phone");
+        mock.Setup(x => x.DeviceType).Returns("Physical");
+        return mock;
+    }
+
+    private static Mock<IConnectivityService> CreateMockConnectivityService()
+    {
+        var mock = new Mock<IConnectivityService>();
+        mock.Setup(x => x.NetworkAccess).Returns(NetworkAccess.Internet);
+        mock.Setup(x => x.ConnectionProfiles).Returns([ConnectionProfile.WiFi]);
         return mock;
     }
 }

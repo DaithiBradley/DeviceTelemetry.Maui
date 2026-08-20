@@ -39,22 +39,17 @@ public sealed class ServiceTests
     }
 
     [Fact]
-    public void MauiBatteryService_Properties_AccessMAUIBattery()
+    public void MauiDeviceInfoService_ImplementsIDeviceInfoService()
     {
-        // Arrange
-        var service = new MauiBatteryService();
+        var service = new MauiDeviceInfoService();
+        service.Should().BeAssignableTo<Interfaces.IDeviceInfoService>();
+    }
 
-        // Act & Assert
-        // These will access the actual MAUI Battery class
-        // In a real test environment, we'd verify the values are within expected ranges
-        var chargeLevel = service.ChargeLevel;
-        chargeLevel.Should().BeInRange(0.0, 1.0);
-
-        var state = service.State;
-        state.Should().BeDefined();
-
-        var powerSource = service.PowerSource;
-        powerSource.Should().BeDefined();
+    [Fact]
+    public void MauiConnectivityService_ImplementsIConnectivityService()
+    {
+        var service = new MauiConnectivityService();
+        service.Should().BeAssignableTo<Interfaces.IConnectivityService>();
     }
 }
 

@@ -1,4 +1,4 @@
-name: Publish NuGet Package
+name: Build and publish
 
 on:
   push:
@@ -10,17 +10,13 @@ on:
   workflow_dispatch:
 
 env:
-  DOTNET_VERSION: '9.0.x'
+  DOTNET_VERSION: '10.0.x'
   PROJECT_PATH: 'DeviceTelemetry.Maui.csproj'
   SOLUTION_PATH: 'DeviceTelemetry.Maui.sln'
 
 jobs:
-  build-and-publish:
+  test-windows:
     runs-on: windows-latest
-    permissions:
-      contents: write
-      packages: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,89 +25,142 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-                
-      - name: Install .NET MAUI workloads
-        run: dotnet workload install maui-tizen
-      
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget
-      
-      - name: Configure NuGet authentication
-        run: |
-          $pat = "${{ secrets.GITHUB_TOKEN }}"
-          $feed = "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
-          dotnet nuget add source $feed --name github --username ${{ github.repository_owner }} --password $pat --store-password-in-clear-text
-        shell: pwsh
-      
+
+      - name: Install MAUI workloads
+        run: dotnet workload install maui-windows maui-android
+
       - name: Restore dependencies
         run: dotnet restore ${{ env.SOLUTION_PATH }}
-      
+
       - name: Build solution
         run: dotnet build ${{ env.SOLUTION_PATH }} -c Release --no-restore
-      
-      - name: Pack NuGet Package
+
+      - name: Run tests
+        run: dotnet test ${{ env.SOLUTION_PATH }} -c Release --no-build --logger "trx;LogFileName=test-results.trx"
+
+      - name: Pack Windows and Android
         run: |
-          if (Test-Path "./artifacts") { Remove-Item -Recurse -Force "./artifacts" }
-          New-Item -ItemType Directory -Path "./artifacts" -Force | Out-Null
-          
-          $version = ""
+          if (Test-Path "./artifacts/windows") { Remove-Item -Recurse -Force "./artifacts/windows" }
+          New-Item -ItemType Directory -Path "./artifacts/windows" -Force | Out-Null
+          $version = "${{ github.ref_name }}"
           if ("${{ github.ref }}" -like "refs/tags/v*") {
-            $version = "${{ github.ref_name }}".Substring(1)
+            $version = $version.Substring(1)
           } else {
-            # Get version from csproj if not a tag
-            $csprojContent = Get-Content ${{ env.PROJECT_PATH }} | Out-String
-            $version = ([xml]$csprojContent).Project.PropertyGroup.Version
-            $buildNumber = "${{ github.run_number }}"
-            $version = "$version-ci.$buildNumber"
+            $version = "1.2.0-ci.${{ github.run_number }}"
           }
-          
-          dotnet pack ${{ env.PROJECT_PATH }} -c Release --no-build -o ./artifacts /p:Version=$version /p:PackageProjectUrl="https://github.com/${{ github.repository }}" /p:RepositoryUrl="https://github.com/${{ github.repository }}" /p:RepositoryType="git"
-          
-          # Verify package was created
-          Write-Host "Packages created:"
-          Get-ChildItem -Path "./artifacts" -Filter "*.nupkg" | ForEach-Object { Write-Host "  - $($_.FullName)" }
+          dotnet pack ${{ env.PROJECT_PATH }} -c Release --no-build -o ./artifacts/windows /p:Version=$version
         shell: pwsh
 
-      - name: Upload NuGet package artifact
+      - name: Upload Windows pack
         uses: actions/upload-artifact@v4
         with:
-          name: nuget-package
-          path: ./artifacts/*.nupkg
-          retention-days: 30
+          name: nupkg-windows
+          path: ./artifacts/windows/*.nupkg
+          retention-days: 14
+
+  build-apple:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install MAUI workloads
+        run: dotnet workload install maui-ios maui-maccatalyst maui-android
+
+      - name: Build iOS, Mac Catalyst, and Android
+        run: dotnet build ${{ env.PROJECT_PATH }} -c Release
+
+      - name: Pack Apple and Android
+        run: |
+          mkdir -p ./artifacts/apple
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${VERSION:1}"
+          else
+            VERSION="1.2.0-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          dotnet pack ${{ env.PROJECT_PATH }} -c Release --no-build -o ./artifacts/apple /p:Version="$VERSION"
+
+      - name: Upload Apple pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg-apple
+          path: ./artifacts/apple/*.nupkg
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [test-windows, build-apple]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Download Windows pack
+        uses: actions/download-artifact@v4
+        with:
+          name: nupkg-windows
+          path: ./artifacts/windows
+
+      - name: Download Apple pack
+        uses: actions/download-artifact@v4
+        with:
+          name: nupkg-apple
+          path: ./artifacts/apple
+
+      - name: Merge nupkgs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $winPkg = Get-ChildItem ./artifacts/windows/*.nupkg | Select-Object -First 1
+          $applePkg = Get-ChildItem ./artifacts/apple/*.nupkg | Select-Object -First 1
+          if (-not $winPkg -or -not $applePkg) { throw "Missing nupkg artifacts to merge." }
+
+          $work = Join-Path $env:RUNNER_TEMP "nupkg-merge"
+          $winDir = Join-Path $work "win"
+          $appleDir = Join-Path $work "apple"
+          New-Item -ItemType Directory -Path $winDir, $appleDir, "./artifacts/merged" -Force | Out-Null
+
+          Copy-Item $winPkg.FullName (Join-Path $work "win.zip")
+          Copy-Item $applePkg.FullName (Join-Path $work "apple.zip")
+          Expand-Archive (Join-Path $work "win.zip") -DestinationPath $winDir -Force
+          Expand-Archive (Join-Path $work "apple.zip") -DestinationPath $appleDir -Force
+
+          $appleLib = Join-Path $appleDir "lib"
+          $winLib = Join-Path $winDir "lib"
+          if (Test-Path $appleLib) {
+            Copy-Item (Join-Path $appleLib "*") $winLib -Recurse -Force
+          }
+
+          $outZip = Join-Path $work $winPkg.Name.Replace(".nupkg", ".zip")
+          if (Test-Path $outZip) { Remove-Item $outZip -Force }
+          Compress-Archive -Path (Join-Path $winDir "*") -DestinationPath $outZip
+          $outPkg = Join-Path "./artifacts/merged" $winPkg.Name
+          Move-Item $outZip $outPkg -Force
+          Write-Host "Merged package: $outPkg"
 
       - name: Publish to GitHub Packages
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') || startsWith(github.ref, 'refs/tags/v')
         run: |
-          $packageFiles = Get-ChildItem -Path "./artifacts" -Filter "*.nupkg"
-          if ($packageFiles.Count -eq 0) {
-            Write-Host "No .nupkg files found in ./artifacts directory"
-            Get-ChildItem -Path "./artifacts" -Recurse | ForEach-Object { Write-Host "Found: $($_.FullName)" }
-            exit 1
-          }
-          foreach ($package in $packageFiles) {
-            Write-Host "Publishing: $($package.FullName)"
-            dotnet nuget push $package.FullName --api-key ${{ secrets.GITHUB_TOKEN }} --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --skip-duplicate
-          }
+          $package = Get-ChildItem -Path "./artifacts/merged" -Filter "*.nupkg" | Select-Object -First 1
+          dotnet nuget push $package.FullName --api-key ${{ secrets.GITHUB_TOKEN }} --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --skip-duplicate
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to NuGet.org
-        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
         run: |
-          $packageFiles = Get-ChildItem -Path "./artifacts" -Filter "*.nupkg"
-          if ($packageFiles.Count -eq 0) {
-            Write-Host "No .nupkg files found in ./artifacts directory"
-            Get-ChildItem -Path "./artifacts" -Recurse | ForEach-Object { Write-Host "Found: $($_.FullName)" }
-            exit 1
-          }
-          foreach ($package in $packageFiles) {
-            Write-Host "Publishing to NuGet.org: $($package.FullName)"
-            dotnet nuget push $package.FullName --api-key ${{ secrets.NUGET_API_KEY }} --source "https://api.nuget.org/v3/index.json" --skip-duplicate
-          }
+          $package = Get-ChildItem -Path "./artifacts/merged" -Filter "*.nupkg" | Select-Object -First 1
+          dotnet nuget push $package.FullName --api-key ${{ secrets.NUGET_API_KEY }} --source "https://api.nuget.org/v3/index.json" --skip-duplicate
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+      - name: Upload merged package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: ./artifacts/merged/*.nupkg
+          retention-days: 30
